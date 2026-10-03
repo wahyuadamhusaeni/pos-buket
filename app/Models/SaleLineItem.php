@@ -19,7 +19,7 @@ class SaleLineItem extends Model
     protected function casts(): array
     {
         return [
-            'qty' => 'decimal:4',
+            'qty' => 'float',
             'hpp_snapshot' => 'integer',
         ];
     }

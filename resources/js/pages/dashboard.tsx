@@ -74,6 +74,15 @@ function formatRp(value: number): string {
     }).format(value);
 }
 
+function formatQty(value: number | string | null | undefined): string {
+    if (value === null || value === undefined || value === '') return '0';
+    const num = Number(value);
+    if (isNaN(num)) return '0';
+    return new Intl.NumberFormat('id-ID', {
+        maximumFractionDigits: 2,
+    }).format(num);
+}
+
 function MetricCard({
     label,
     value,
@@ -235,10 +244,10 @@ export default function Dashboard({
                                             <Link href={`/items/${item.id}`} className="font-medium text-foreground hover:text-primary truncate block">
                                                 {item.nama}
                                             </Link>
-                                            <span className="text-muted-foreground">Min: {item.stok_min} {item.satuan}</span>
+                                            <span className="text-muted-foreground">Min: {formatQty(item.stok_min)} {item.satuan}</span>
                                         </div>
-                                        <span className={`ml-2 font-semibold shrink-0 ${item.stok_saat_ini <= 0 ? 'text-red-500' : 'text-amber-500'}`}>
-                                            {item.stok_saat_ini} {item.satuan}
+                                        <span className={`ml-2 font-semibold shrink-0 ${Number(item.stok_saat_ini) <= 0 ? 'text-red-500' : 'text-amber-500'}`}>
+                                            {formatQty(item.stok_saat_ini)} {item.satuan}
                                         </span>
                                     </li>
                                 ))}

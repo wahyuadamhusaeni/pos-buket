@@ -56,6 +56,15 @@ const formatRupiah = (value: number) => {
     }).format(value);
 };
 
+const formatQty = (value: number | string | null | undefined): string => {
+    if (value === null || value === undefined || value === '') return '0';
+    const num = Number(value);
+    if (isNaN(num)) return '0';
+    return new Intl.NumberFormat('id-ID', {
+        maximumFractionDigits: 2,
+    }).format(num);
+};
+
 export default function ItemShow({ item, movements }: ItemShowProps) {
     return (
         <>
@@ -118,10 +127,10 @@ export default function ItemShow({ item, movements }: ItemShowProps) {
                         </CardHeader>
                         <CardContent>
                             <div className="text-3xl font-extrabold text-foreground">
-                                {item.stok_saat_ini} <span className="text-base font-normal text-muted-foreground">{item.satuan}</span>
+                                {formatQty(item.stok_saat_ini)} <span className="text-base font-normal text-muted-foreground">{item.satuan}</span>
                             </div>
                             <p className="text-xs text-muted-foreground mt-1">
-                                Batas minimum aman: {item.stok_min} {item.satuan}
+                                Batas minimum aman: {formatQty(item.stok_min)} {item.satuan}
                             </p>
                         </CardContent>
                     </Card>
@@ -233,7 +242,7 @@ export default function ItemShow({ item, movements }: ItemShowProps) {
                                             </td>
                                             <td className="px-4 py-3 text-right font-semibold">
                                                 <span className={m.tipe === 'in' ? 'text-emerald-600' : 'text-rose-600'}>
-                                                    {m.tipe === 'in' ? '+' : '-'}{m.qty} {item.satuan}
+                                                    {m.tipe === 'in' ? '+' : '-'}{formatQty(m.qty)} {item.satuan}
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3 text-right font-mono text-xs">

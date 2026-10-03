@@ -66,6 +66,15 @@ const formatRupiah = (val: number) => {
     }).format(val || 0);
 };
 
+const formatQty = (val: number | string | null | undefined): string => {
+    if (val === null || val === undefined || val === '') return '0';
+    const num = Number(val);
+    if (isNaN(num)) return '0';
+    return new Intl.NumberFormat('id-ID', {
+        maximumFractionDigits: 2,
+    }).format(num);
+};
+
 export default function ReportStock({ movements, items, filters }: StockReportProps) {
     const [dari, setDari] = useState(filters.dari);
     const [sampai, setSampai] = useState(filters.sampai);
@@ -212,7 +221,7 @@ export default function ReportStock({ movements, items, filters }: StockReportPr
                                             </td>
                                             <td className="px-4 py-3 text-right font-semibold">
                                                 <span className={m.tipe === 'in' ? 'text-emerald-600' : 'text-rose-600'}>
-                                                    {m.tipe === 'in' ? '+' : '-'}{m.qty} {m.item?.satuan}
+                                                    {m.tipe === 'in' ? '+' : '-'}{formatQty(m.qty)} {m.item?.satuan}
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3 text-right font-mono text-xs">

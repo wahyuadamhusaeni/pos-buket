@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Item;
 use App\Models\Payment;
 use App\Models\Sale;
+use App\Models\SaleFee;
 use App\Models\SaleLine;
 use App\Models\SaleLineItem;
 use App\Models\StockMovement;
@@ -61,6 +62,10 @@ class SaleService
             // Create the sale header first
             $sale = Sale::create([
                 'tanggal' => $data['tanggal'],
+                'jenis_pesanan' => $data['jenis_pesanan'] ?? 'langsung',
+                'tanggal_ambil' => $data['tanggal_ambil'] ?? null,
+                'jam_ambil' => $data['jam_ambil'] ?? null,
+                'tipe_pengiriman' => $data['tipe_pengiriman'] ?? 'pickup',
                 'pelanggan' => $data['pelanggan'] ?? null,
                 'telepon_pelanggan' => $data['telepon_pelanggan'] ?? null,
                 'catatan' => $data['catatan'] ?? null,
@@ -68,8 +73,9 @@ class SaleService
                 'total_hpp' => 0,
                 'total_biaya_tambahan' => 0,
                 'status_bayar' => $data['status_bayar'],
-                'metode' => $data['metode'],
+                'metode' => $data['metode'] ?? 'tunai',
                 'nominal_dp' => $data['nominal_dp'] ?? 0,
+                'status_pesanan' => $data['status_pesanan'] ?? (($data['jenis_pesanan'] ?? 'langsung') === 'preorder' ? 'antrean' : 'selesai'),
                 'status' => 'selesai',
                 'created_by' => $createdBy,
             ]);
@@ -137,6 +143,26 @@ class SaleService
                 $totalBiayaTambahan += $biayaTambahan;
             }
 
+            // Save multi-fees (Biaya Jasa & Layanan Tambahan: Jasa Rangkai, Jasa Tukar Uang, Bensin/Ongkir, dll)
+            $feesData = $data['fees'] ?? [];
+            $totalFees = 0;
+            foreach ($feesData as $fee) {
+                $nominal = max(0, (int) ($fee['nominal'] ?? 0));
+                $nama = trim($fee['nama'] ?? '');
+                if ($nominal > 0 && ! empty($nama)) {
+                    $totalFees += $nominal;
+                    SaleFee::create([
+                        'sale_id' => $sale->id,
+                        'nama' => $nama,
+                        'nominal' => $nominal,
+                        'catatan' => $fee['catatan'] ?? null,
+                    ]);
+                }
+            }
+
+            // Grand Total Tagihan = Total Rangkaian Buket + Total Biaya Jasa
+            $totalHarga += $totalFees;
+
             // Update sale totals
             $sale->update([
                 'total_harga' => $totalHarga,
@@ -150,7 +176,7 @@ class SaleService
                     'sale_id' => $sale->id,
                     'tanggal' => $data['tanggal'],
                     'nominal' => $totalHarga,
-                    'metode' => $data['metode'],
+                    'metode' => $data['metode'] ?? 'tunai',
                     'catatan' => 'Pembayaran lunas',
                 ]);
             } elseif ($data['status_bayar'] === 'dp' && isset($data['nominal_dp']) && $data['nominal_dp'] > 0) {
@@ -158,8 +184,8 @@ class SaleService
                     'sale_id' => $sale->id,
                     'tanggal' => $data['tanggal'],
                     'nominal' => $data['nominal_dp'],
-                    'metode' => $data['metode'],
-                    'catatan' => 'DP',
+                    'metode' => $data['metode'] ?? 'tunai',
+                    'catatan' => 'Pembayaran Uang Muka (DP)',
                 ]);
             }
 
@@ -168,44 +194,107 @@ class SaleService
     }
 
     /**
-     * Cancel a sale and reverse all stock movements.
+     * Cancel / Resolve abandoned sale.
+     *
+     * @param  array{
+     *   alasan: string,
+     *   penanganan_stok?: string,
+     *   penanganan_dp?: string,
+     *   nominal_refund?: int,
+     *   metode_refund?: string,
+     * }|string  $params
      */
-    public function cancel(Sale $sale, string $alasan, ?int $cancelledBy = null): Sale
+    public function cancel(Sale $sale, array|string $params, ?int $cancelledBy = null): Sale
     {
         if ($sale->status === 'dibatalkan') {
             throw new \RuntimeException('Penjualan sudah dibatalkan');
         }
 
-        return DB::transaction(function () use ($sale, $alasan, $cancelledBy) {
-            // Reverse stock for each component
+        if (is_string($params)) {
+            $params = [
+                'alasan' => $params,
+                'penanganan_stok' => 'restock',
+                'penanganan_dp' => 'hangus',
+                'nominal_refund' => 0,
+            ];
+        }
+
+        $alasan = $params['alasan'] ?? 'Pesanan dibatalkan';
+        $penangananStok = $params['penanganan_stok'] ?? 'restock';
+        $penangananDp = $params['penanganan_dp'] ?? 'hangus';
+        $nominalRefund = (int) ($params['nominal_refund'] ?? 0);
+        $metodeRefund = $params['metode_refund'] ?? 'tunai';
+
+        return DB::transaction(function () use ($sale, $alasan, $penangananStok, $penangananDp, $nominalRefund, $metodeRefund, $cancelledBy) {
             $movements = StockMovement::where('ref_tipe', 'sale_line')
                 ->whereIn('ref_id', $sale->lines->pluck('id'))
                 ->where('tipe', 'sale')
                 ->get();
 
-            foreach ($movements as $movement) {
-                $item = Item::lockForUpdate()->findOrFail($movement->item_id);
-                $qty = abs((float) $movement->qty);
-                $hppSnapshot = (int) $movement->hpp_per_unit;
+            // 1. Handling Stock / Bouquet
+            if ($penangananStok === 'restock') {
+                // Return items back to raw stock
+                foreach ($movements as $movement) {
+                    $item = Item::lockForUpdate()->findOrFail($movement->item_id);
+                    $qty = abs((float) $movement->qty);
+                    $hppSnapshot = (int) $movement->hpp_per_unit;
 
-                // Return stock at original HPP snapshot
-                $item->stok_saat_ini = (float) $item->stok_saat_ini + $qty;
-                $item->save();
+                    $item->stok_saat_ini = (float) $item->stok_saat_ini + $qty;
+                    $item->save();
 
-                StockMovement::create([
-                    'item_id' => $item->id,
-                    'tipe' => 'reversal',
-                    'qty' => $qty,
-                    'hpp_per_unit' => $hppSnapshot,
-                    'nilai' => (int) round($qty * $hppSnapshot),
-                    'ref_tipe' => 'stock_movement',
-                    'ref_id' => $movement->id,
-                    'alasan' => $alasan,
-                    'created_by' => $cancelledBy,
+                    StockMovement::create([
+                        'item_id' => $item->id,
+                        'tipe' => 'reversal',
+                        'qty' => $qty,
+                        'hpp_per_unit' => $hppSnapshot,
+                        'nilai' => (int) round($qty * $hppSnapshot),
+                        'ref_tipe' => 'stock_movement',
+                        'ref_id' => $movement->id,
+                        'alasan' => "Bahan dibongkar kembali ke stok - {$alasan}",
+                        'created_by' => $cancelledBy,
+                    ]);
+                }
+            } elseif ($penangananStok === 'waste') {
+                // Record items as waste
+                foreach ($movements as $movement) {
+                    $item = Item::lockForUpdate()->findOrFail($movement->item_id);
+                    $qty = abs((float) $movement->qty);
+                    $hppSnapshot = (int) $movement->hpp_per_unit;
+
+                    StockMovement::create([
+                        'item_id' => $item->id,
+                        'tipe' => 'waste',
+                        'qty' => -$qty,
+                        'hpp_per_unit' => $hppSnapshot,
+                        'nilai' => (int) round($qty * $hppSnapshot),
+                        'ref_tipe' => 'sale',
+                        'ref_id' => $sale->id,
+                        'alasan' => "Buket pesanan #{$sale->id} tidak diambil & layu/rusak - {$alasan}",
+                        'created_by' => $cancelledBy,
+                    ]);
+                }
+            }
+            // If 'ready_stock': stock remains deducted as the bouquet is kept as a finished display ready stock
+
+            // 2. Handling Down Payment (DP)
+            if ($penangananDp === 'refund' && $nominalRefund > 0) {
+                Payment::create([
+                    'sale_id' => $sale->id,
+                    'tanggal' => now()->toDateString(),
+                    'nominal' => -$nominalRefund,
+                    'metode' => $metodeRefund,
+                    'catatan' => "Pengembalian dana (Refund DP) pembatalan pesanan #{$sale->id}",
                 ]);
             }
 
-            $sale->update(['status' => 'dibatalkan']);
+            $sale->update([
+                'status' => 'dibatalkan',
+                'status_pesanan' => 'dibatalkan',
+                'alasan_batal' => $alasan,
+                'penanganan_stok' => $penangananStok,
+                'penanganan_dp' => $penangananDp,
+                'nominal_refund' => $nominalRefund,
+            ]);
 
             return $sale->fresh();
         });
@@ -232,10 +321,29 @@ class SaleService
             // Recalculate payment status
             $totalPaid = (int) $sale->payments()->sum('nominal');
             $newStatus = $totalPaid >= $sale->total_harga ? 'lunas' : 'dp';
-            $sale->update(['status_bayar' => $newStatus]);
+
+            $updates = ['status_bayar' => $newStatus];
+            if (! empty($data['mark_as_completed']) && $newStatus === 'lunas') {
+                $updates['status_pesanan'] = 'selesai';
+            }
+            $sale->update($updates);
 
             return $payment;
         });
+    }
+
+    /**
+     * Update order stage status (antrean, proses, siap, selesai).
+     */
+    public function updateStatusPesanan(Sale $sale, string $statusPesanan): Sale
+    {
+        if ($sale->status === 'dibatalkan') {
+            throw new \RuntimeException('Tidak bisa mengubah status pesanan yang dibatalkan');
+        }
+
+        $sale->update(['status_pesanan' => $statusPesanan]);
+
+        return $sale;
     }
 
     /**

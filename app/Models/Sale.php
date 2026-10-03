@@ -23,9 +23,36 @@ use Illuminate\Support\Carbon;
  * @property string $metode tunai|transfer|lainnya
  * @property int $nominal_dp
  * @property string $status selesai|dibatalkan
+ * @property string $jenis_pesanan langsung|preorder
+ * @property Carbon|null $tanggal_ambil
+ * @property string|null $jam_ambil
+ * @property string $tipe_pengiriman pickup|delivery
+ * @property string $status_pesanan antrean|proses|siap|selesai|dibatalkan
  * @property int|null $created_by
  */
-#[Fillable(['tanggal', 'pelanggan', 'telepon_pelanggan', 'catatan', 'total_harga', 'total_hpp', 'total_biaya_tambahan', 'status_bayar', 'metode', 'nominal_dp', 'status', 'created_by'])]
+#[Fillable([
+    'tanggal',
+    'jenis_pesanan',
+    'tanggal_ambil',
+    'jam_ambil',
+    'tipe_pengiriman',
+    'pelanggan',
+    'telepon_pelanggan',
+    'catatan',
+    'total_harga',
+    'total_hpp',
+    'total_biaya_tambahan',
+    'status_bayar',
+    'metode',
+    'nominal_dp',
+    'status_pesanan',
+    'status',
+    'alasan_batal',
+    'penanganan_stok',
+    'penanganan_dp',
+    'nominal_refund',
+    'created_by',
+])]
 class Sale extends Model
 {
     /** @use HasFactory<SaleFactory> */
@@ -35,16 +62,23 @@ class Sale extends Model
     {
         return [
             'tanggal' => 'date',
+            'tanggal_ambil' => 'date',
             'total_harga' => 'integer',
             'total_hpp' => 'integer',
             'total_biaya_tambahan' => 'integer',
             'nominal_dp' => 'integer',
+            'nominal_refund' => 'integer',
         ];
     }
 
     public function lines(): HasMany
     {
         return $this->hasMany(SaleLine::class);
+    }
+
+    public function fees(): HasMany
+    {
+        return $this->hasMany(SaleFee::class);
     }
 
     public function payments(): HasMany
@@ -55,6 +89,14 @@ class Sale extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /**
+     * Total biaya jasa & layanan tambahan
+     */
+    public function getTotalBiayaJasaAttribute(): int
+    {
+        return (int) $this->fees->sum('nominal');
     }
 
     /**

@@ -25,7 +25,7 @@ class StockMovement extends Model
     protected function casts(): array
     {
         return [
-            'qty' => 'decimal:4',
+            'qty' => 'float',
             'hpp_per_unit' => 'integer',
             'nilai' => 'integer',
         ];

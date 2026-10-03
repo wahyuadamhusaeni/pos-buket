@@ -52,6 +52,15 @@ const formatRupiah = (val: number) => {
     }).format(val || 0);
 };
 
+const formatQty = (value: number | string | null | undefined): string => {
+    if (value === null || value === undefined || value === '') return '0';
+    const num = Number(value);
+    if (isNaN(num)) return '0';
+    return new Intl.NumberFormat('id-ID', {
+        maximumFractionDigits: 2,
+    }).format(num);
+};
+
 export default function StockAdjustments({ items }: StockAdjustmentsProps) {
     const [mode, setMode] = useState<'waste' | 'opname_minus' | 'opname_plus'>('waste');
 
@@ -68,7 +77,7 @@ export default function StockAdjustments({ items }: StockAdjustmentsProps) {
         return items.map((it) => ({
             value: it.id,
             label: it.nama,
-            sublabel: `Stok: ${it.stok_saat_ini} ${it.satuan} • HPP: ${formatRupiah(it.hpp_rata_rata)}`,
+            sublabel: `Stok: ${formatQty(it.stok_saat_ini)} ${it.satuan} • HPP: ${formatRupiah(it.hpp_rata_rata)}`,
             badge: it.tipe === 'bunga_segar' ? 'Segar' : it.tipe === 'bunga_artificial' ? 'Artificial' : it.tipe === 'wrapping' ? 'Kertas' : it.tipe === 'pita' ? 'Pita' : it.tipe,
         }));
     }, [items]);
@@ -271,10 +280,10 @@ export default function StockAdjustments({ items }: StockAdjustmentsProps) {
                                 <div className="p-3 rounded-lg bg-muted/40 border border-border/50 flex flex-col justify-center">
                                     <div className="text-xs text-muted-foreground">Proyeksi Saldo Stok:</div>
                                     <div className="flex items-center gap-2 mt-1">
-                                        <span className="font-mono text-sm">{selectedItem?.stok_saat_ini}</span>
+                                        <span className="font-mono text-sm">{formatQty(selectedItem?.stok_saat_ini)}</span>
                                         <span className="text-muted-foreground">→</span>
                                         <span className={`font-mono text-lg font-bold ${data.arah === 'plus' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                            {projectedStock} {selectedItem?.satuan}
+                                            {formatQty(projectedStock)} {selectedItem?.satuan}
                                         </span>
                                     </div>
                                     <div className="text-[11px] text-muted-foreground mt-0.5">

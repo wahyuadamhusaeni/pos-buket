@@ -155,3 +155,157 @@ test('waste adjustment reduces stock and creates audit movement', function () {
         ->and($movement->tipe)->toEqual('waste')
         ->and($movement->qty)->toEqual(-3);
 });
+
+test('sale with DP records initial payment and can be settled later', function () {
+    $user = User::factory()->create(['role' => 'admin']);
+
+    $bunga = Item::create([
+        'nama' => 'Mawar Merah Sexy Red',
+        'tipe' => 'bunga_hidup',
+        'satuan' => 'tangkai',
+        'stok_saat_ini' => 30,
+        'hpp_rata_rata' => 5000,
+        'stok_min' => 5,
+        'aktif' => true,
+    ]);
+
+    // Create a Pre-Order with DP
+    $response = $this->actingAs($user)->post(route('sales.store'), [
+        'tanggal' => now()->toDateString(),
+        'jenis_pesanan' => 'preorder',
+        'tanggal_ambil' => now()->addDays(2)->toDateString(),
+        'jam_ambil' => '14:00',
+        'tipe_pengiriman' => 'pickup',
+        'pelanggan' => 'Kak Amanda',
+        'telepon_pelanggan' => '08123456789',
+        'status_bayar' => 'dp',
+        'metode' => 'transfer',
+        'nominal_dp' => 40000,
+        'lines' => [
+            [
+                'nama_buket' => 'Buket Wisuda Amanda',
+                'harga_jual' => 100000,
+                'biaya_tambahan' => 10000,
+                'components' => [
+                    ['item_id' => $bunga->id, 'qty' => 5],
+                ],
+            ],
+        ],
+    ]);
+
+    $sale = Sale::where('pelanggan', 'Kak Amanda')->first();
+    expect($sale)->not->toBeNull()
+        ->and($sale->status_bayar)->toEqual('dp')
+        ->and($sale->nominal_dp)->toEqual(40000)
+        ->and($sale->total_harga)->toEqual(100000)
+        ->and($sale->total_terbayar)->toEqual(40000)
+        ->and($sale->sisa_tagihan)->toEqual(60000)
+        ->and($sale->jenis_pesanan)->toEqual('preorder')
+        ->and($sale->status_pesanan)->toEqual('antrean');
+
+    // Update order status to siap
+    $this->actingAs($user)->patch(route('sales.status-pesanan.update', $sale), [
+        'status_pesanan' => 'siap',
+    ]);
+    expect($sale->fresh()->status_pesanan)->toEqual('siap');
+
+    // 2 days later: Customer settles remaining 60,000 on pickup
+    $settleResponse = $this->actingAs($user)->post(route('sales.payments.store', $sale), [
+        'tanggal' => now()->addDays(2)->toDateString(),
+        'nominal' => 60000,
+        'metode' => 'tunai',
+        'catatan' => 'Pelunasan sisa saat buket diambil di toko',
+        'mark_as_completed' => true,
+    ]);
+
+    $sale->refresh();
+    expect($sale->status_bayar)->toEqual('lunas')
+        ->and($sale->total_terbayar)->toEqual(100000)
+        ->and($sale->sisa_tagihan)->toEqual(0)
+        ->and($sale->status_pesanan)->toEqual('selesai');
+});
+
+test('sale with belum bayar does not require payment method and creates no payments', function () {
+    $user = User::factory()->create(['role' => 'admin']);
+
+    $bunga = Item::create([
+        'nama' => 'Bunga Lily Orange',
+        'tipe' => 'bunga_hidup',
+        'satuan' => 'tangkai',
+        'stok_saat_ini' => 15,
+        'hpp_rata_rata' => 8000,
+        'stok_min' => 2,
+        'aktif' => true,
+    ]);
+
+    $response = $this->actingAs($user)->post(route('sales.store'), [
+        'tanggal' => now()->toDateString(),
+        'jenis_pesanan' => 'preorder',
+        'tanggal_ambil' => now()->addDays(1)->toDateString(),
+        'pelanggan' => 'Pak Budi',
+        'status_bayar' => 'belum',
+        'lines' => [
+            [
+                'nama_buket' => 'Buket Meja Kantor',
+                'harga_jual' => 80000,
+                'components' => [
+                    ['item_id' => $bunga->id, 'qty' => 3],
+                ],
+            ],
+        ],
+    ]);
+
+    $sale = Sale::where('pelanggan', 'Pak Budi')->first();
+    expect($sale)->not->toBeNull()
+        ->and($sale->status_bayar)->toEqual('belum')
+        ->and($sale->total_terbayar)->toEqual(0)
+        ->and($sale->sisa_tagihan)->toEqual(80000)
+        ->and($sale->payments)->toHaveCount(0);
+});
+
+test('sale handles multi service fees (jasa rangkai, jasa tukar uang, bensin)', function () {
+    $user = User::factory()->create(['role' => 'owner']);
+
+    $bunga = Item::create([
+        'nama' => 'Mawar Merah',
+        'tipe' => 'bunga_hidup',
+        'satuan' => 'tangkai',
+        'stok_saat_ini' => 20,
+        'hpp_rata_rata' => 5000,
+        'stok_min' => 2,
+        'aktif' => true,
+    ]);
+
+    $response = $this->actingAs($user)->post(route('sales.store'), [
+        'tanggal' => now()->toDateString(),
+        'pelanggan' => 'Siti Khadijah',
+        'status_bayar' => 'dp',
+        'metode' => 'transfer',
+        'nominal_dp' => 50000,
+        'lines' => [
+            [
+                'nama_buket' => 'Money Bouquet Tower',
+                'harga_jual' => 100000,
+                'components' => [
+                    ['item_id' => $bunga->id, 'qty' => 4],
+                ],
+            ],
+        ],
+        'fees' => [
+            ['nama' => 'Jasa Rangkai Buket Uang', 'nominal' => 35000],
+            ['nama' => 'Jasa Penukaran Uang Baru Pecahan 50rb', 'nominal' => 25000],
+            ['nama' => 'Biaya Bensin / Antar Kurir', 'nominal' => 15000],
+        ],
+    ]);
+
+    $sale = Sale::where('pelanggan', 'Siti Khadijah')->first();
+    expect($sale)->not->toBeNull();
+    $response->assertRedirect(route('sales.show', $sale));
+    expect($sale)->not->toBeNull()
+        // Grand total = 100.000 (buket) + 35.000 + 25.000 + 15.000 = 175.000
+        ->and($sale->total_harga)->toEqual(175000)
+        ->and($sale->fees)->toHaveCount(3)
+        ->and($sale->total_biaya_jasa)->toEqual(75000)
+        ->and($sale->total_terbayar)->toEqual(50000)
+        ->and($sale->sisa_tagihan)->toEqual(125000);
+});

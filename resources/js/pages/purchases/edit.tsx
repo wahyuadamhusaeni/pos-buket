@@ -73,6 +73,15 @@ const formatRupiah = (val: number) => {
     }).format(val || 0);
 };
 
+const formatQty = (val: number | string | null | undefined): string => {
+    if (val === null || val === undefined || val === '') return '0';
+    const num = Number(val);
+    if (isNaN(num)) return '0';
+    return new Intl.NumberFormat('id-ID', {
+        maximumFractionDigits: 2,
+    }).format(num);
+};
+
 export default function PurchasesEdit({ purchase, suppliers, items }: PurchasesEditProps) {
     const itemsMap = useMemo(() => {
         const map = new Map<number, ItemOption>();
@@ -84,7 +93,7 @@ export default function PurchasesEdit({ purchase, suppliers, items }: PurchasesE
         return items.map((it) => ({
             value: it.id,
             label: it.nama,
-            sublabel: `Stok: ${it.stok_saat_ini} ${it.satuan} • HPP: ${formatRupiah(it.hpp_rata_rata)}`,
+            sublabel: `Stok: ${formatQty(it.stok_saat_ini)} ${it.satuan} • HPP: ${formatRupiah(it.hpp_rata_rata)}`,
             badge: it.tipe === 'bunga_segar' ? 'Segar' : it.tipe === 'bunga_artificial' ? 'Artificial' : it.tipe === 'wrapping' ? 'Kertas' : it.tipe === 'pita' ? 'Pita' : it.tipe,
         }));
     }, [items]);

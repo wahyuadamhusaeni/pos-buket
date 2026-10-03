@@ -43,6 +43,15 @@ const formatRupiah = (val: number) => {
     }).format(val || 0);
 };
 
+const formatQty = (val: number | string | null | undefined): string => {
+    if (val === null || val === undefined || val === '') return '0';
+    const num = Number(val);
+    if (isNaN(num)) return '0';
+    return new Intl.NumberFormat('id-ID', {
+        maximumFractionDigits: 2,
+    }).format(num);
+};
+
 const getTipeBadge = (tipe: string) => {
     switch (tipe) {
         case 'bunga_hidup':
@@ -162,7 +171,7 @@ export default function ReportInventory({ items, total_nilai }: InventoryReportP
                                         <td className="px-4 py-3.5">{getTipeBadge(it.tipe)}</td>
                                         <td className="px-4 py-3.5 text-right font-bold">
                                             <span className={it.is_low_stock ? 'text-rose-600' : ''}>
-                                                {it.stok_saat_ini} {it.satuan}
+                                                {formatQty(it.stok_saat_ini)} {it.satuan}
                                             </span>
                                         </td>
                                         <td className="px-4 py-3.5 text-right font-mono text-xs">

@@ -23,8 +23,8 @@ class PurchaseItem extends Model
     protected function casts(): array
     {
         return [
-            'qty' => 'decimal:4',
-            'qty_per_satuan' => 'decimal:4',
+            'qty' => 'float',
+            'qty_per_satuan' => 'float',
             'harga_satuan' => 'integer',
             'alokasi_biaya' => 'integer',
             'harga_efektif' => 'integer',

@@ -3,7 +3,9 @@ import { Head, Link, useForm } from '@inertiajs/react';
 import {
     AlertCircle,
     ArrowLeft,
+    Calendar,
     CheckCircle2,
+    Clock,
     DollarSign,
     Layers,
     Minus,
@@ -11,8 +13,10 @@ import {
     Receipt,
     ShoppingBag,
     Sparkles,
+    Store,
     Trash2,
     TrendingUp,
+    Truck,
 } from 'lucide-react';
 import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
@@ -57,6 +61,12 @@ interface BouquetLine {
     components: ComponentItem[];
 }
 
+interface SaleFeeItem {
+    nama: string;
+    nominal: number;
+    catatan?: string;
+}
+
 interface SalesCreateProps {
     items: ItemOption[];
     templates: TemplateOption[];
@@ -82,6 +92,15 @@ const formatRupiah = (val: number) => {
     }).format(val || 0);
 };
 
+const formatQty = (val: number | string | null | undefined): string => {
+    if (val === null || val === undefined || val === '') return '0';
+    const num = Number(val);
+    if (isNaN(num)) return '0';
+    return new Intl.NumberFormat('id-ID', {
+        maximumFractionDigits: 2,
+    }).format(num);
+};
+
 export default function SalesCreate({ items, templates, margin_target }: SalesCreateProps) {
     const today = new Date().toISOString().split('T')[0];
 
@@ -96,7 +115,7 @@ export default function SalesCreate({ items, templates, margin_target }: SalesCr
         return items.map((item) => ({
             value: item.id,
             label: item.nama,
-            sublabel: `Stok: ${item.stok_saat_ini} ${item.satuan} • HPP: ${formatRupiah(item.hpp_rata_rata)}`,
+            sublabel: `Stok: ${formatQty(item.stok_saat_ini)} ${item.satuan} • HPP: ${formatRupiah(item.hpp_rata_rata)}`,
             badge: item.tipe === 'bunga_segar' ? 'Segar' : item.tipe === 'bunga_artificial' ? 'Artificial' : item.tipe === 'wrapping' ? 'Kertas' : item.tipe === 'pita' ? 'Pita' : item.tipe,
         }));
     }, [items]);
@@ -113,8 +132,20 @@ export default function SalesCreate({ items, templates, margin_target }: SalesCr
         ];
     }, [templates]);
 
+    const defaultAmbilDate = useMemo(() => {
+        const d = new Date();
+        d.setDate(d.getDate() + 2);
+        return d.toISOString().split('T')[0];
+    }, []);
+
+    const [cashReceived, setCashReceived] = useState<number | ''>('');
+
     const { data, setData, post, processing, errors } = useForm({
         tanggal: today,
+        jenis_pesanan: 'langsung' as 'langsung' | 'preorder',
+        tanggal_ambil: defaultAmbilDate,
+        jam_ambil: '14:00',
+        tipe_pengiriman: 'pickup' as 'pickup' | 'delivery',
         pelanggan: '',
         telepon_pelanggan: '',
         catatan: '',
@@ -130,7 +161,33 @@ export default function SalesCreate({ items, templates, margin_target }: SalesCr
                 components: [] as ComponentItem[],
             },
         ] as BouquetLine[],
+        fees: [] as SaleFeeItem[],
     });
+
+    // Multi Biaya Jasa Handlers
+    const addFeePreset = (nama: string, defaultNominal: number) => {
+        setData('fees', [
+            ...data.fees,
+            { nama, nominal: defaultNominal, catatan: '' },
+        ]);
+    };
+
+    const addEmptyFee = () => {
+        setData('fees', [
+            ...data.fees,
+            { nama: '', nominal: 0, catatan: '' },
+        ]);
+    };
+
+    const updateFee = (index: number, field: keyof SaleFeeItem, value: any) => {
+        const newFees = [...data.fees];
+        newFees[index] = { ...newFees[index], [field]: value };
+        setData('fees', newFees);
+    };
+
+    const removeFee = (index: number) => {
+        setData('fees', data.fees.filter((_, idx) => idx !== index));
+    };
 
     // Helper: calculate total HPP of a single bouquet line
     const calculateLineHpp = (line: BouquetLine) => {
@@ -257,27 +314,40 @@ export default function SalesCreate({ items, templates, margin_target }: SalesCr
 
     // Grand totals
     const grandTotals = useMemo(() => {
-        let totalHarga = 0;
+        let totalBouquetHarga = 0;
         let totalHpp = 0;
         let totalBiayaTambahan = 0;
 
         data.lines.forEach((line) => {
-            totalHarga += Number(line.harga_jual || 0);
+            totalBouquetHarga += Number(line.harga_jual || 0);
             totalHpp += calculateLineHpp(line);
             totalBiayaTambahan += Number(line.biaya_tambahan || 0);
         });
 
+        let totalFees = 0;
+        data.fees.forEach((fee) => {
+            totalFees += Number(fee.nominal || 0);
+        });
+
+        const totalHarga = totalBouquetHarga + totalFees;
         const grossProfit = totalHarga - totalHpp;
         const grossMargin = totalHarga > 0 ? (grossProfit / totalHarga) * 100 : 0;
 
         return {
+            totalBouquetHarga,
+            totalFees,
             totalHarga,
             totalHpp,
             totalBiayaTambahan,
             grossProfit,
             grossMargin,
         };
-    }, [data.lines]);
+    }, [data.lines, data.fees]);
+
+    const cashChange = useMemo(() => {
+        if (!cashReceived || Number(cashReceived) < grandTotals.totalHarga) return 0;
+        return Number(cashReceived) - grandTotals.totalHarga;
+    }, [cashReceived, grandTotals.totalHarga]);
 
     const submit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -439,7 +509,7 @@ export default function SalesCreate({ items, templates, margin_target }: SalesCr
                                                                         </td>
                                                                         <td className="py-2 px-3">
                                                                             <span className={isOutOfStock ? 'text-destructive font-bold' : 'text-muted-foreground'}>
-                                                                                {item.stok_saat_ini} {item.satuan}
+                                                                                {formatQty(item.stok_saat_ini)} {item.satuan}
                                                                                 {isOutOfStock && ' ⚠️'}
                                                                             </span>
                                                                         </td>
@@ -583,6 +653,140 @@ export default function SalesCreate({ items, templates, margin_target }: SalesCr
                                 <Plus className="h-4 w-4 mr-2" />
                                 Tambah Rangkaian Buket Lainnya dalam Transaksi Ini
                             </Button>
+
+                            {/* MULTI BIAYA JASA & LAYANAN TAMBAHAN */}
+                            <Card className="border-border/70 shadow-sm overflow-hidden">
+                                <CardHeader className="bg-gradient-to-r from-amber-500/10 via-rose-500/10 to-pink-500/10 border-b border-border/50 py-3.5 px-5">
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                        <div>
+                                            <CardTitle className="text-sm font-bold flex items-center gap-2 text-foreground">
+                                                <Sparkles className="h-4 w-4 text-amber-500" />
+                                                Biaya Jasa & Layanan Tambahan (Multi-Jasa)
+                                            </CardTitle>
+                                            <p className="text-xs text-muted-foreground mt-0.5">
+                                                Tambahkan rincian jasa seperti jasa rangkai buket, jasa penukaran uang baru, biaya bensin / kurir, dsb.
+                                            </p>
+                                        </div>
+                                        {grandTotals.totalFees > 0 && (
+                                            <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-mono font-bold text-xs self-start sm:self-auto">
+                                                Total Jasa: {formatRupiah(grandTotals.totalFees)}
+                                            </Badge>
+                                        )}
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="p-5 space-y-4">
+                                    {/* Preset Quick Chips */}
+                                    <div>
+                                        <div className="text-xs font-semibold text-muted-foreground mb-2">
+                                            Pilih Cepat Layanan Populer:
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => addFeePreset('Jasa Rangkai Buket', 35000)}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/70 bg-background hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:border-rose-300 text-xs font-medium text-foreground transition-all"
+                                            >
+                                                🌸 + Jasa Rangkai (Rp 35rb)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => addFeePreset('Jasa Penukaran Uang Baru Buket', 25000)}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/70 bg-background hover:bg-emerald-50 dark:hover:bg-emerald-950/30 hover:border-emerald-300 text-xs font-medium text-foreground transition-all"
+                                            >
+                                                💵 + Jasa Tukar Uang (Rp 25rb)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => addFeePreset('Biaya Bensin / Antar Kurir', 15000)}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/70 bg-background hover:bg-blue-50 dark:hover:bg-blue-950/30 hover:border-blue-300 text-xs font-medium text-foreground transition-all"
+                                            >
+                                                🛵 + Biaya Bensin/Antar (Rp 15rb)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => addFeePreset('Jasa Pasang Lampu LED / Akrilik', 10000)}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/70 bg-background hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-300 text-xs font-medium text-foreground transition-all"
+                                            >
+                                                💡 + Lampu LED/Akrilik (Rp 10rb)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => addFeePreset('Jasa Kartu Ucapan & Topper Custom', 5000)}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/70 bg-background hover:bg-purple-50 dark:hover:bg-purple-950/30 hover:border-purple-300 text-xs font-medium text-foreground transition-all"
+                                            >
+                                                ✍️ + Kartu Ucapan (Rp 5rb)
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Fee rows list */}
+                                    {data.fees.length === 0 ? (
+                                        <div className="rounded-xl border border-dashed border-border/80 p-4 text-center text-xs text-muted-foreground bg-muted/10">
+                                            Belum ada biaya jasa tambahan. Klik tombol layanan populer di atas atau klik tombol tambah di bawah untuk memasukkan jasa manual.
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {data.fees.map((fee, fIdx) => (
+                                                <div key={fIdx} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-3 rounded-xl border border-border/60 bg-muted/20">
+                                                    <div className="flex-1">
+                                                        <Label className="text-[11px] text-muted-foreground">Nama Jasa / Biaya</Label>
+                                                        <Input
+                                                            type="text"
+                                                            placeholder="Misal: Jasa Rangkai / Biaya Bensin"
+                                                            value={fee.nama}
+                                                            onChange={(e) => updateFee(fIdx, 'nama', e.target.value)}
+                                                            className="h-8 text-xs font-medium mt-1"
+                                                        />
+                                                    </div>
+                                                    <div className="w-full sm:w-44">
+                                                        <Label className="text-[11px] text-muted-foreground">Nominal Tarif (Rp)</Label>
+                                                        <Input
+                                                            type="number"
+                                                            min="0"
+                                                            placeholder="0"
+                                                            value={fee.nominal || ''}
+                                                            onChange={(e) => updateFee(fIdx, 'nominal', parseInt(e.target.value) || 0)}
+                                                            className="h-8 text-xs font-mono font-bold mt-1 text-right"
+                                                        />
+                                                    </div>
+                                                    <div className="flex-1">
+                                                        <Label className="text-[11px] text-muted-foreground">Keterangan / Catatan (Opsional)</Label>
+                                                        <Input
+                                                            type="text"
+                                                            placeholder="Keterangan rincian..."
+                                                            value={fee.catatan || ''}
+                                                            onChange={(e) => updateFee(fIdx, 'catatan', e.target.value)}
+                                                            className="h-8 text-xs mt-1"
+                                                        />
+                                                    </div>
+                                                    <div className="self-end sm:self-center sm:pt-4">
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => removeFee(fIdx)}
+                                                            className="h-8 w-8 p-0 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                                        >
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={addEmptyFee}
+                                        className="text-xs border-dashed border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                                    >
+                                        <Plus className="h-3.5 w-3.5 mr-1.5" />
+                                        + Tambah Baris Jasa Manual
+                                    </Button>
+                                </CardContent>
+                            </Card>
                         </div>
 
                         {/* RIGHT COLUMN: Order & Payment Checkout Card (4 cols) */}
@@ -591,15 +795,53 @@ export default function SalesCreate({ items, templates, margin_target }: SalesCr
                                 <CardHeader className="bg-gradient-to-r from-rose-500/10 to-pink-500/10 border-b border-border/50 pb-4">
                                     <CardTitle className="text-base font-bold flex items-center gap-2 text-foreground">
                                         <Receipt className="h-5 w-5 text-rose-500" />
-                                        Informasi Kasir & Pembayaran
+                                        Informasi Pesanan & Pembayaran
                                     </CardTitle>
                                 </CardHeader>
 
                                 <CardContent className="p-5 space-y-4">
-                                    {/* Tanggal */}
+                                    {/* Jenis Pesanan Toggle */}
+                                    <div className="grid gap-1.5">
+                                        <Label className="text-xs font-semibold">Jenis Pesanan</Label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setData('jenis_pesanan', 'langsung')}
+                                                className={`flex items-center gap-2 p-2.5 rounded-xl border text-left transition-all ${
+                                                    data.jenis_pesanan === 'langsung'
+                                                        ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold shadow-sm'
+                                                        : 'border-border/70 hover:border-rose-300 text-muted-foreground'
+                                                }`}
+                                            >
+                                                <ShoppingBag className="h-4 w-4 shrink-0 text-rose-500" />
+                                                <div>
+                                                    <div className="text-xs font-semibold">Langsung Jadi</div>
+                                                    <div className="text-[10px] text-muted-foreground">Buket diambil hari ini</div>
+                                                </div>
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => setData('jenis_pesanan', 'preorder')}
+                                                className={`flex items-center gap-2 p-2.5 rounded-xl border text-left transition-all ${
+                                                    data.jenis_pesanan === 'preorder'
+                                                        ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold shadow-sm'
+                                                        : 'border-border/70 hover:border-rose-300 text-muted-foreground'
+                                                }`}
+                                            >
+                                                <Calendar className="h-4 w-4 shrink-0 text-rose-500" />
+                                                <div>
+                                                    <div className="text-xs font-semibold">Pre-Order (PO)</div>
+                                                    <div className="text-[10px] text-muted-foreground">Jadwal tanggal nanti</div>
+                                                </div>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Tanggal Order Masuk */}
                                     <div className="grid gap-1.5">
                                         <Label htmlFor="tanggal" className="text-xs">
-                                            Tanggal Transaksi
+                                            Tanggal Transaksi / Order Masuk
                                         </Label>
                                         <Input
                                             id="tanggal"
@@ -612,17 +854,86 @@ export default function SalesCreate({ items, templates, margin_target }: SalesCr
                                         <InputError message={errors.tanggal} />
                                     </div>
 
+                                    {/* Pre-Order Schedule Box */}
+                                    {data.jenis_pesanan === 'preorder' && (
+                                        <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/20 border border-amber-200 dark:border-amber-900/60 space-y-3">
+                                            <div className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-200">
+                                                <Calendar className="h-4 w-4 text-amber-600" />
+                                                Jadwal Jadi & Pengambilan Buket:
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div className="grid gap-1">
+                                                    <Label htmlFor="tanggal_ambil" className="text-[11px] text-muted-foreground">
+                                                        Tanggal Ambil / Kirim <span className="text-rose-500">*</span>
+                                                    </Label>
+                                                    <Input
+                                                        id="tanggal_ambil"
+                                                        type="date"
+                                                        value={data.tanggal_ambil}
+                                                        onChange={(e) => setData('tanggal_ambil', e.target.value)}
+                                                        className="h-8 text-xs bg-background"
+                                                        required={data.jenis_pesanan === 'preorder'}
+                                                    />
+                                                </div>
+                                                <div className="grid gap-1">
+                                                    <Label htmlFor="jam_ambil" className="text-[11px] text-muted-foreground">
+                                                        Jam / Waktu Ambil
+                                                    </Label>
+                                                    <Input
+                                                        id="jam_ambil"
+                                                        value={data.jam_ambil}
+                                                        onChange={(e) => setData('jam_ambil', e.target.value)}
+                                                        placeholder="cth: 14:00"
+                                                        className="h-8 text-xs bg-background"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="grid gap-1">
+                                                <Label className="text-[11px] text-muted-foreground">Metode Penyerahan Buket:</Label>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setData('tipe_pengiriman', 'pickup')}
+                                                        className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg border text-xs font-medium ${
+                                                            data.tipe_pengiriman === 'pickup'
+                                                                ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
+                                                                : 'bg-background hover:bg-muted text-muted-foreground border-border'
+                                                        }`}
+                                                    >
+                                                        <Store className="h-3.5 w-3.5" />
+                                                        Ambil di Toko
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setData('tipe_pengiriman', 'delivery')}
+                                                        className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg border text-xs font-medium ${
+                                                            data.tipe_pengiriman === 'delivery'
+                                                                ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
+                                                                : 'bg-background hover:bg-muted text-muted-foreground border-border'
+                                                        }`}
+                                                    >
+                                                        <Truck className="h-3.5 w-3.5" />
+                                                        Kirim Kurir
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {/* Pelanggan */}
                                     <div className="grid gap-1.5">
                                         <Label htmlFor="pelanggan" className="text-xs">
-                                            Nama Pelanggan (Opsional)
+                                            Nama Pelanggan {data.jenis_pesanan === 'preorder' && <span className="text-rose-500">*</span>}
                                         </Label>
                                         <Input
                                             id="pelanggan"
                                             value={data.pelanggan}
                                             onChange={(e) => setData('pelanggan', e.target.value)}
-                                            placeholder="Pelanggan Langsung (Walk-in)"
+                                            placeholder={data.jenis_pesanan === 'preorder' ? 'Wajib untuk Pre-Order (cth: Kak Amanda)' : 'Pelanggan Langsung (Walk-in)'}
                                             className="h-9 text-xs focus-visible:ring-rose-500"
+                                            required={data.jenis_pesanan === 'preorder'}
                                         />
                                         <InputError message={errors.pelanggan} />
                                     </div>
@@ -636,90 +947,221 @@ export default function SalesCreate({ items, templates, margin_target }: SalesCr
                                             id="telepon"
                                             value={data.telepon_pelanggan}
                                             onChange={(e) => setData('telepon_pelanggan', e.target.value)}
-                                            placeholder="08123456789"
+                                            placeholder="08123456789 (untuk konfirmasi buket siap)"
                                             className="h-9 text-xs focus-visible:ring-rose-500"
                                         />
                                     </div>
 
                                     {/* Status Pembayaran */}
-                                    <div className="grid gap-1.5">
-                                        <Label className="text-xs font-semibold">Status Bayar</Label>
-                                        <div className="grid grid-cols-3 gap-1">
-                                            {(['lunas', 'dp', 'belum'] as const).map((st) => (
-                                                <Button
-                                                    key={st}
-                                                    type="button"
-                                                    variant={data.status_bayar === st ? 'default' : 'outline'}
-                                                    size="sm"
-                                                    onClick={() => setData('status_bayar', st)}
-                                                    className={`capitalize text-xs h-8 ${
-                                                        data.status_bayar === st
-                                                            ? 'bg-rose-500 hover:bg-rose-600 text-white font-bold'
-                                                            : ''
-                                                    }`}
-                                                >
-                                                    {st === 'belum' ? 'Belum Bayar' : st.toUpperCase()}
-                                                </Button>
-                                            ))}
+                                    <div className="grid gap-1.5 pt-1">
+                                        <Label className="text-xs font-semibold">Status Pembayaran Saat Ini</Label>
+                                        <div className="grid grid-cols-3 gap-1.5">
+                                            <button
+                                                type="button"
+                                                onClick={() => setData('status_bayar', 'lunas')}
+                                                className={`py-2 px-1 text-center rounded-lg border text-xs font-semibold transition-all ${
+                                                    data.status_bayar === 'lunas'
+                                                        ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm'
+                                                        : 'border-border/70 hover:border-emerald-300 text-muted-foreground'
+                                                }`}
+                                            >
+                                                Lunas Penuh
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setData('status_bayar', 'dp');
+                                                    if (!data.nominal_dp || data.nominal_dp <= 0) {
+                                                        setData('nominal_dp', Math.round(grandTotals.totalHarga * 0.5));
+                                                    }
+                                                }}
+                                                className={`py-2 px-1 text-center rounded-lg border text-xs font-semibold transition-all ${
+                                                    data.status_bayar === 'dp'
+                                                        ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
+                                                        : 'border-border/70 hover:border-amber-300 text-muted-foreground'
+                                                }`}
+                                            >
+                                                Uang Muka (DP)
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setData('status_bayar', 'belum');
+                                                    setData('nominal_dp', 0);
+                                                }}
+                                                className={`py-2 px-1 text-center rounded-lg border text-xs font-semibold transition-all ${
+                                                    data.status_bayar === 'belum'
+                                                        ? 'bg-slate-700 text-white border-slate-800 shadow-sm'
+                                                        : 'border-border/70 hover:border-slate-400 text-muted-foreground'
+                                                }`}
+                                            >
+                                                Belum Bayar
+                                            </button>
                                         </div>
                                     </div>
 
-                                    {/* DP Input if selected */}
+                                    {/* KONDISI 1: LUNAS */}
+                                    {data.status_bayar === 'lunas' && (
+                                        <div className="space-y-3 p-3.5 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
+                                            <div className="grid gap-1.5">
+                                                <Label htmlFor="metode" className="text-xs font-medium text-emerald-900 dark:text-emerald-200">
+                                                    Metode Pembayaran Lunas:
+                                                </Label>
+                                                <select
+                                                    id="metode"
+                                                    value={data.metode}
+                                                    onChange={(e) => setData('metode', e.target.value as any)}
+                                                    className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:ring-1 focus-visible:ring-emerald-500"
+                                                >
+                                                    <option value="tunai">Tunai / Cash</option>
+                                                    <option value="transfer">Transfer Bank / QRIS</option>
+                                                    <option value="lainnya">Lainnya / EDC / Debit</option>
+                                                </select>
+                                            </div>
+
+                                            {data.metode === 'tunai' && (
+                                                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-emerald-200/50">
+                                                    <div className="grid gap-1">
+                                                        <Label className="text-[11px] text-muted-foreground">Uang Diterima:</Label>
+                                                        <Input
+                                                            type="number"
+                                                            value={cashReceived}
+                                                            onChange={(e) => setCashReceived(e.target.value ? parseInt(e.target.value) : '')}
+                                                            placeholder={String(grandTotals.totalHarga)}
+                                                            className="h-8 text-xs font-mono"
+                                                        />
+                                                    </div>
+                                                    <div className="grid gap-1">
+                                                        <Label className="text-[11px] text-muted-foreground">Kembalian:</Label>
+                                                        <div className="h-8 px-2 flex items-center font-mono font-bold text-xs rounded bg-muted/60 text-foreground">
+                                                            {formatRupiah(cashChange)}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* KONDISI 2: DP */}
                                     {data.status_bayar === 'dp' && (
-                                        <div className="grid gap-1.5 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
-                                            <Label htmlFor="nominal_dp" className="text-xs font-bold text-amber-800 dark:text-amber-300">
-                                                Nominal Uang Muka (DP):
-                                            </Label>
-                                            <Input
-                                                id="nominal_dp"
-                                                type="number"
-                                                min="1"
-                                                value={data.nominal_dp}
-                                                onChange={(e) => setData('nominal_dp', parseInt(e.target.value) || 0)}
-                                                className="h-9 text-sm font-semibold"
-                                                placeholder="Contoh: 100000"
-                                            />
-                                            <div className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
-                                                Sisa Piutang: {formatRupiah(Math.max(0, grandTotals.totalHarga - Number(data.nominal_dp)))}
+                                        <div className="space-y-3 p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800">
+                                            <div className="grid gap-1.5">
+                                                <div className="flex justify-between items-center">
+                                                    <Label htmlFor="nominal_dp" className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                                                        Nominal Uang Muka (DP):
+                                                    </Label>
+                                                    <div className="flex gap-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setData('nominal_dp', Math.round(grandTotals.totalHarga * 0.3))}
+                                                            className="text-[10px] bg-background border px-1.5 py-0.5 rounded text-muted-foreground hover:text-foreground"
+                                                        >
+                                                            30%
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setData('nominal_dp', Math.round(grandTotals.totalHarga * 0.5))}
+                                                            className="text-[10px] bg-background border px-1.5 py-0.5 rounded text-muted-foreground hover:text-foreground"
+                                                        >
+                                                            50%
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <Input
+                                                    id="nominal_dp"
+                                                    type="number"
+                                                    min="1"
+                                                    max={grandTotals.totalHarga}
+                                                    value={data.nominal_dp}
+                                                    onChange={(e) => setData('nominal_dp', parseInt(e.target.value) || 0)}
+                                                    className="h-9 text-sm font-bold font-mono bg-background"
+                                                    placeholder="Masukkan nominal DP..."
+                                                    required
+                                                />
+                                            </div>
+
+                                            <div className="grid gap-1.5">
+                                                <Label htmlFor="metode_dp" className="text-xs font-medium text-amber-900 dark:text-amber-200">
+                                                    Metode Pembayaran DP:
+                                                </Label>
+                                                <select
+                                                    id="metode_dp"
+                                                    value={data.metode}
+                                                    onChange={(e) => setData('metode', e.target.value as any)}
+                                                    className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:ring-1 focus-visible:ring-amber-500"
+                                                >
+                                                    <option value="transfer">Transfer Bank / QRIS</option>
+                                                    <option value="tunai">Tunai / Cash</option>
+                                                    <option value="lainnya">Lainnya / EDC</option>
+                                                </select>
+                                            </div>
+
+                                            <div className="p-2.5 rounded-lg bg-background border border-amber-200 dark:border-amber-900 text-xs space-y-1">
+                                                <div className="flex justify-between text-muted-foreground">
+                                                    <span>DP Masuk Hari Ini:</span>
+                                                    <span className="font-mono font-semibold text-emerald-600">
+                                                        {formatRupiah(Number(data.nominal_dp || 0))}
+                                                    </span>
+                                                </div>
+                                                <div className="flex justify-between font-bold text-amber-700 dark:text-amber-300 pt-1 border-t">
+                                                    <span>Sisa Piutang (Dilunasi Nanti):</span>
+                                                    <span className="font-mono">
+                                                        {formatRupiah(Math.max(0, grandTotals.totalHarga - Number(data.nominal_dp || 0)))}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="text-[11px] text-amber-800 dark:text-amber-300 leading-tight">
+                                                💡 Pelunasan sisa tagihan dapat dicatat saat buket diambil/diantar melalui tombol <strong>"💳 Lunasi"</strong> di menu Kasir.
                                             </div>
                                         </div>
                                     )}
 
-                                    {/* Metode Pembayaran */}
-                                    <div className="grid gap-1.5">
-                                        <Label htmlFor="metode" className="text-xs">
-                                            Metode Pembayaran
-                                        </Label>
-                                        <select
-                                            id="metode"
-                                            value={data.metode}
-                                            onChange={(e) => setData('metode', e.target.value as any)}
-                                            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:ring-1 focus-visible:ring-rose-500"
-                                        >
-                                            <option value="tunai">Tunai / Cash</option>
-                                            <option value="transfer">Transfer Bank / QRIS</option>
-                                            <option value="lainnya">Lainnya / EDC</option>
-                                        </select>
-                                    </div>
+                                    {/* KONDISI 3: BELUM BAYAR (PIUTANG PENUH) */}
+                                    {data.status_bayar === 'belum' && (
+                                        <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-900/60 border border-slate-300 dark:border-slate-800 space-y-1.5 text-xs text-slate-700 dark:text-slate-300">
+                                            <div className="font-bold flex items-center gap-1.5 text-slate-900 dark:text-white">
+                                                <Clock className="h-4 w-4 text-slate-500" />
+                                                Pesanan Belum Bayar (Piutang Penuh)
+                                            </div>
+                                            <p className="text-[11px] leading-relaxed">
+                                                Belum ada uang yang diterima hari ini. Total tagihan sebesar <strong className="font-mono text-rose-600 dark:text-rose-400">{formatRupiah(grandTotals.totalHarga)}</strong> akan dicatat sebagai piutang.
+                                            </p>
+                                            <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                                Metode pembayaran tidak perlu diisi sekarang dan dapat dipilih saat pelanggan melunasi tagihan saat buket diambil.
+                                            </p>
+                                        </div>
+                                    )}
 
-                                    {/* Catatan */}
+                                    {/* Catatan / Pesan Ucapan */}
                                     <div className="grid gap-1.5">
                                         <Label htmlFor="catatan" className="text-xs">
-                                            Catatan / Ucapan Buket
+                                            Catatan / Pesan Kartu Ucapan Buket
                                         </Label>
                                         <textarea
                                             id="catatan"
                                             rows={2}
                                             value={data.catatan}
                                             onChange={(e) => setData('catatan', e.target.value)}
-                                            placeholder="Pesan kartu ucapan atau instruksi kurir..."
+                                            placeholder="Contoh: Happy Graduation Amanda, instruksi warna pita..."
                                             className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs shadow-sm focus-visible:ring-1 focus-visible:ring-rose-500"
                                         />
                                     </div>
 
                                     {/* Live Financial Summary */}
-                                    <div className="pt-3 border-t border-border/80 space-y-2 text-xs">
+                                    <div className="pt-3 border-t border-border/80 space-y-1.5 text-xs">
                                         <div className="flex justify-between text-muted-foreground">
+                                            <span>Subtotal Rangkaian ({data.lines.length} buket):</span>
+                                            <span className="font-mono font-medium text-foreground">{formatRupiah(grandTotals.totalBouquetHarga)}</span>
+                                        </div>
+                                        {grandTotals.totalFees > 0 && (
+                                            <div className="flex justify-between text-amber-600 dark:text-amber-400 font-medium">
+                                                <span>Total Biaya Jasa ({data.fees.length} layanan):</span>
+                                                <span className="font-mono font-bold">+{formatRupiah(grandTotals.totalFees)}</span>
+                                            </div>
+                                        )}
+                                        <div className="flex justify-between text-muted-foreground pt-1">
                                             <span>Estimasi HPP Total:</span>
                                             <span className="font-mono">{formatRupiah(grandTotals.totalHpp)}</span>
                                         </div>
@@ -730,22 +1172,48 @@ export default function SalesCreate({ items, templates, margin_target }: SalesCr
                                             </span>
                                         </div>
                                         <div className="flex justify-between items-baseline pt-2 border-t text-sm font-bold">
-                                            <span className="text-foreground">Total Penjualan:</span>
+                                            <span className="text-foreground">Total Tagihan:</span>
                                             <span className="text-xl font-extrabold font-mono text-rose-600">
                                                 {formatRupiah(grandTotals.totalHarga)}
                                             </span>
                                         </div>
                                     </div>
 
-                                    {/* Submit Button */}
-                                    <Button
-                                        type="submit"
-                                        disabled={processing || grandTotals.totalHarga <= 0}
-                                        className="w-full bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 text-white font-bold py-5 shadow-lg shadow-rose-500/25 mt-2"
-                                    >
-                                        <CheckCircle2 className="h-5 w-5 mr-2" />
-                                        {processing ? 'Memproses Transaksi...' : 'Selesaikan Transaksi & Potong Stok'}
-                                    </Button>
+                                    {/* Context-Aware Submit Buttons */}
+                                    {data.status_bayar === 'lunas' && (
+                                        <Button
+                                            type="submit"
+                                            disabled={processing || grandTotals.totalHarga <= 0}
+                                            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold py-5 shadow-lg shadow-emerald-600/25 mt-2"
+                                        >
+                                            <CheckCircle2 className="h-5 w-5 mr-2" />
+                                            {processing ? 'Memproses Transaksi...' : `Bayar Lunas ${formatRupiah(grandTotals.totalHarga)}`}
+                                        </Button>
+                                    )}
+
+                                    {data.status_bayar === 'dp' && (
+                                        <Button
+                                            type="submit"
+                                            disabled={processing || grandTotals.totalHarga <= 0 || !data.nominal_dp}
+                                            className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold py-5 shadow-lg shadow-amber-500/25 mt-2"
+                                        >
+                                            <Receipt className="h-5 w-5 mr-2" />
+                                            {processing
+                                                ? 'Menyimpan Pesanan...'
+                                                : `Simpan Pesanan & Catat DP ${formatRupiah(Number(data.nominal_dp || 0))}`}
+                                        </Button>
+                                    )}
+
+                                    {data.status_bayar === 'belum' && (
+                                        <Button
+                                            type="submit"
+                                            disabled={processing || grandTotals.totalHarga <= 0}
+                                            className="w-full bg-gradient-to-r from-slate-700 to-slate-900 hover:from-slate-800 hover:to-black text-white font-bold py-5 shadow-lg shadow-slate-900/25 mt-2"
+                                        >
+                                            <Clock className="h-5 w-5 mr-2" />
+                                            {processing ? 'Menyimpan Pesanan...' : 'Simpan Pesanan (Belum Bayar / Piutang)'}
+                                        </Button>
+                                    )}
                                 </CardContent>
                             </Card>
                         </div>

@@ -18,7 +18,7 @@ class TemplateItem extends Model
     protected function casts(): array
     {
         return [
-            'qty' => 'decimal:4',
+            'qty' => 'float',
         ];
     }
 

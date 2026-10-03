@@ -39,6 +39,7 @@ Route::middleware(['auth'])->group(function () {
     Route::resource('sales', SaleController::class)->except(['edit', 'update']);
     Route::post('sales/{sale}/cancel', [SaleController::class, 'cancel'])->name('sales.cancel');
     Route::post('sales/{sale}/payments', [SaleController::class, 'addPayment'])->name('sales.payments.store');
+    Route::patch('sales/{sale}/status-pesanan', [SaleController::class, 'updateStatusPesanan'])->name('sales.status-pesanan.update');
 
     // Stock adjustments & waste
     Route::get('stock/adjustments', [StockAdjustmentController::class, 'index'])->name('stock.adjustments.index');

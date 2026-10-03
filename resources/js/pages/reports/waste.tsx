@@ -57,6 +57,15 @@ const formatRupiah = (val: number) => {
     }).format(val || 0);
 };
 
+const formatQty = (val: number | string | null | undefined): string => {
+    if (val === null || val === undefined || val === '') return '0';
+    const num = Number(val);
+    if (isNaN(num)) return '0';
+    return new Intl.NumberFormat('id-ID', {
+        maximumFractionDigits: 2,
+    }).format(num);
+};
+
 export default function ReportWaste({ movements, summary, filters }: WasteReportProps) {
     const [dari, setDari] = useState(filters.dari);
     const [sampai, setSampai] = useState(filters.sampai);
@@ -192,7 +201,7 @@ export default function ReportWaste({ movements, summary, filters }: WasteReport
                                                 </Link>
                                             </td>
                                             <td className="px-4 py-3 text-right font-bold text-rose-600">
-                                                {m.qty} {m.item?.satuan}
+                                                {formatQty(m.qty)} {m.item?.satuan}
                                             </td>
                                             <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">
                                                 {formatRupiah(m.hpp_per_unit)}

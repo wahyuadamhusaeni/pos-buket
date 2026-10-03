@@ -6,6 +6,7 @@ use App\Http\Requests\StoreSaleRequest;
 use App\Models\Item;
 use App\Models\Payment;
 use App\Models\Sale;
+use App\Models\SaleFee;
 use App\Models\SaleLine;
 use App\Models\SaleLineItem;
 use App\Models\Setting;
@@ -22,10 +23,20 @@ class SaleController extends Controller
 
     public function index(Request $request): Response
     {
-        $query = Sale::orderByDesc('tanggal')->orderByDesc('id');
+        $query = Sale::with('payments')->orderByDesc('tanggal')->orderByDesc('id');
 
-        if ($request->filled('status_bayar')) {
+        if ($request->input('status_bayar') === 'belum_lunas') {
+            $query->whereIn('status_bayar', ['dp', 'belum']);
+        } elseif ($request->filled('status_bayar')) {
             $query->where('status_bayar', $request->status_bayar);
+        }
+
+        if ($request->filled('jadwal') && $request->jadwal === 'hari_ini') {
+            $query->whereDate('tanggal_ambil', now()->toDateString());
+        }
+
+        if ($request->filled('status_pesanan')) {
+            $query->where('status_pesanan', $request->status_pesanan);
         }
 
         if ($request->filled('search')) {
@@ -47,18 +58,32 @@ class SaleController extends Controller
         $sales = $query->paginate(20)->withQueryString()->through(fn (Sale $s) => [
             'id' => $s->id,
             'tanggal' => $s->tanggal->format('d/m/Y'),
+            'jenis_pesanan' => $s->jenis_pesanan ?? 'langsung',
+            'tanggal_ambil' => $s->tanggal_ambil?->format('d/m/Y'),
+            'jam_ambil' => $s->jam_ambil,
+            'tipe_pengiriman' => $s->tipe_pengiriman ?? 'pickup',
+            'status_pesanan' => $s->status_pesanan ?? 'selesai',
             'pelanggan' => $s->pelanggan ?? 'Umum',
+            'telepon_pelanggan' => $s->telepon_pelanggan,
             'total_harga' => $s->total_harga,
             'total_hpp' => $s->total_hpp,
             'laba_kotor' => $s->laba_kotor,
             'status_bayar' => $s->status_bayar,
             'metode' => $s->metode,
+            'total_terbayar' => $s->total_terbayar,
+            'sisa_tagihan' => $s->sisa_tagihan,
             'status' => $s->status,
         ]);
 
+        $stats = [
+            'total_belum_lunas' => Sale::where('status', 'selesai')->whereIn('status_bayar', ['dp', 'belum'])->count(),
+            'po_hari_ini' => Sale::where('status', 'selesai')->whereDate('tanggal_ambil', now()->toDateString())->count(),
+        ];
+
         return Inertia::render('sales/index', [
             'sales' => $sales,
-            'filters' => $request->only(['status_bayar', 'search', 'tanggal_dari', 'tanggal_sampai', 'status']),
+            'stats' => $stats,
+            'filters' => $request->only(['status_bayar', 'search', 'tanggal_dari', 'tanggal_sampai', 'status', 'jadwal', 'status_pesanan']),
         ]);
     }
 
@@ -93,17 +118,22 @@ class SaleController extends Controller
         }
 
         return redirect()->route('sales.show', $sale)
-            ->with('success', 'Transaksi berhasil disimpan');
+            ->with('success', 'Transaksi pesanan berhasil disimpan');
     }
 
     public function show(Sale $sale): Response
     {
-        $sale->load('lines.lineItems.item', 'payments', 'createdBy');
+        $sale->load('lines.lineItems.item', 'payments', 'createdBy', 'fees');
 
         return Inertia::render('sales/show', [
             'sale' => [
                 'id' => $sale->id,
                 'tanggal' => $sale->tanggal->format('d/m/Y'),
+                'jenis_pesanan' => $sale->jenis_pesanan ?? 'langsung',
+                'tanggal_ambil' => $sale->tanggal_ambil?->format('d/m/Y'),
+                'jam_ambil' => $sale->jam_ambil,
+                'tipe_pengiriman' => $sale->tipe_pengiriman ?? 'pickup',
+                'status_pesanan' => $sale->status_pesanan ?? 'selesai',
                 'pelanggan' => $sale->pelanggan,
                 'telepon_pelanggan' => $sale->telepon_pelanggan,
                 'catatan' => $sale->catatan,
@@ -114,8 +144,19 @@ class SaleController extends Controller
                 'metode' => $sale->metode,
                 'nominal_dp' => $sale->nominal_dp,
                 'status' => $sale->status,
+                'alasan_batal' => $sale->alasan_batal,
+                'penanganan_stok' => $sale->penanganan_stok,
+                'penanganan_dp' => $sale->penanganan_dp,
+                'nominal_refund' => $sale->nominal_refund,
                 'total_terbayar' => $sale->total_terbayar,
                 'sisa_tagihan' => $sale->sisa_tagihan,
+                'total_biaya_jasa' => $sale->total_biaya_jasa,
+                'fees' => $sale->fees->map(fn (SaleFee $f) => [
+                    'id' => $f->id,
+                    'nama' => $f->nama,
+                    'nominal' => $f->nominal,
+                    'catatan' => $f->catatan,
+                ]),
                 'lines' => $sale->lines->map(fn (SaleLine $l) => [
                     'id' => $l->id,
                     'nama_buket' => $l->nama_buket,
@@ -145,20 +186,32 @@ class SaleController extends Controller
     }
 
     /**
-     * Cancel a sale and reverse stock.
+     * Cancel / Resolve abandoned sale.
      */
     public function cancel(Sale $sale, Request $request): RedirectResponse
     {
-        $request->validate(['alasan' => 'required|string|max:500']);
+        $request->validate([
+            'alasan' => 'required|string|max:500',
+            'penanganan_stok' => 'nullable|in:restock,ready_stock,waste',
+            'penanganan_dp' => 'nullable|in:hangus,refund',
+            'nominal_refund' => 'nullable|integer|min:0',
+            'metode_refund' => 'nullable|in:tunai,transfer,lainnya',
+        ]);
 
         try {
-            $this->saleService->cancel($sale, $request->alasan, $request->user()?->id);
+            $this->saleService->cancel($sale, $request->only([
+                'alasan',
+                'penanganan_stok',
+                'penanganan_dp',
+                'nominal_refund',
+                'metode_refund',
+            ]), $request->user()?->id);
         } catch (\RuntimeException $e) {
             return back()->withErrors(['general' => $e->getMessage()]);
         }
 
         return redirect()->route('sales.show', $sale)
-            ->with('success', 'Penjualan dibatalkan dan stok dikembalikan');
+            ->with('success', 'Pembatalan pesanan berhasil diproses');
     }
 
     /**
@@ -171,14 +224,33 @@ class SaleController extends Controller
             'nominal' => 'required|integer|min:1',
             'metode' => 'required|in:tunai,transfer,lainnya',
             'catatan' => 'nullable|string|max:500',
+            'mark_as_completed' => 'nullable|boolean',
         ]);
 
         try {
-            $this->saleService->addPayment($sale, $request->only(['tanggal', 'nominal', 'metode', 'catatan']));
+            $this->saleService->addPayment($sale, $request->only(['tanggal', 'nominal', 'metode', 'catatan', 'mark_as_completed']));
         } catch (\RuntimeException $e) {
             return back()->withErrors(['general' => $e->getMessage()]);
         }
 
-        return back()->with('success', 'Pembayaran berhasil dicatat');
+        return back()->with('success', 'Pembayaran / pelunasan berhasil dicatat');
+    }
+
+    /**
+     * Update order stage status (antrean, proses, siap, selesai).
+     */
+    public function updateStatusPesanan(Sale $sale, Request $request): RedirectResponse
+    {
+        $request->validate([
+            'status_pesanan' => 'required|in:antrean,proses,siap,selesai,dibatalkan',
+        ]);
+
+        try {
+            $this->saleService->updateStatusPesanan($sale, $request->status_pesanan);
+        } catch (\RuntimeException $e) {
+            return back()->withErrors(['general' => $e->getMessage()]);
+        }
+
+        return back()->with('success', 'Status pengerjaan pesanan berhasil diperbarui');
     }
 }

@@ -30,8 +30,8 @@ class Item extends Model
     protected function casts(): array
     {
         return [
-            'stok_saat_ini' => 'decimal:4',
-            'stok_min' => 'decimal:4',
+            'stok_saat_ini' => 'float',
+            'stok_min' => 'float',
             'hpp_rata_rata' => 'integer',
             'aktif' => 'boolean',
         ];

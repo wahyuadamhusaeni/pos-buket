@@ -41,7 +41,15 @@ class DashboardController extends Controller
             ->select(['id', 'nama', 'tipe', 'satuan', 'stok_saat_ini', 'stok_min'])
             ->orderBy('stok_saat_ini')
             ->limit(10)
-            ->get();
+            ->get()
+            ->map(fn (Item $item) => [
+                'id' => $item->id,
+                'nama' => $item->nama,
+                'tipe' => $item->tipe,
+                'satuan' => $item->satuan,
+                'stok_saat_ini' => (float) $item->stok_saat_ini,
+                'stok_min' => (float) $item->stok_min,
+            ]);
 
         // Waste and adjustments loss this month
         $kerugianBulanIni = (int) StockMovement::whereIn('tipe', ['waste', 'adjust'])

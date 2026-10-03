@@ -62,6 +62,15 @@ const formatRupiah = (value: number) => {
     }).format(value);
 };
 
+const formatQty = (value: number | string | null | undefined): string => {
+    if (value === null || value === undefined || value === '') return '0';
+    const num = Number(value);
+    if (isNaN(num)) return '0';
+    return new Intl.NumberFormat('id-ID', {
+        maximumFractionDigits: 2,
+    }).format(num);
+};
+
 const getTipeBadge = (tipe: string) => {
     switch (tipe) {
         case 'bunga_hidup':
@@ -245,11 +254,11 @@ export default function ItemsIndex({ items, filters }: ItemsIndexProps) {
                                             <td className="px-4 py-3.5">{getTipeBadge(item.tipe)}</td>
                                             <td className="px-4 py-3.5 text-right font-semibold">
                                                 <span className={item.is_low_stock ? 'text-rose-600 font-bold' : ''}>
-                                                    {item.stok_saat_ini} {item.satuan}
+                                                    {formatQty(item.stok_saat_ini)} {item.satuan}
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3.5 text-right text-muted-foreground">
-                                                {item.stok_min} {item.satuan}
+                                                {formatQty(item.stok_min)} {item.satuan}
                                             </td>
                                             <td className="px-4 py-3.5 text-right font-mono">
                                                 {formatRupiah(item.hpp_rata_rata)}
